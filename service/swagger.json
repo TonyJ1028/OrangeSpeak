@@ -1,0 +1,200 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "operationId": "AuthController_login",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "登录成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string",
+                      "description": "JWT token"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "用户ID"
+                        },
+                        "username": {
+                          "type": "string",
+                          "description": "用户名"
+                        },
+                        "email": {
+                          "type": "string",
+                          "description": "电子邮箱"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "登录失败"
+          }
+        },
+        "summary": "用户登录",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "operationId": "AuthController_register",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "注册成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string",
+                      "description": "JWT token"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "用户ID"
+                        },
+                        "username": {
+                          "type": "string",
+                          "description": "用户名"
+                        },
+                        "email": {
+                          "type": "string",
+                          "description": "电子邮箱"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "注册失败"
+          }
+        },
+        "summary": "用户注册",
+        "tags": [
+          "auth"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "OrangeSpeak API",
+    "description": "OrangeSpeak 应用程序的 API 文档",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "auth",
+      "description": "认证相关接口"
+    },
+    {
+      "name": "channels",
+      "description": "频道相关接口"
+    },
+    {
+      "name": "messages",
+      "description": "消息相关接口"
+    }
+  ],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {
+      "LoginDto": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "用户名",
+            "example": "johndoe",
+            "minLength": 3
+          },
+          "password": {
+            "type": "string",
+            "description": "密码",
+            "example": "password123",
+            "minLength": 6
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ]
+      },
+      "RegisterDto": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "用户名",
+            "example": "johndoe",
+            "minLength": 3
+          },
+          "password": {
+            "type": "string",
+            "description": "密码",
+            "example": "password123",
+            "minLength": 6
+          },
+          "email": {
+            "type": "string",
+            "description": "电子邮箱",
+            "example": "john@example.com"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ]
+      }
+    }
+  }
+}

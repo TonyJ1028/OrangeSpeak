@@ -52,7 +52,7 @@ class ApiService {
         'password': password,
       });
 
-      if (response.statusCode == 200) {
+      if (response.statusCode == 200 || response.statusCode == 201) {
         final token = response.data['token'] as String;
         await _saveToken(token);
         return User.fromJson(response.data['user']);
@@ -81,7 +81,9 @@ class ApiService {
         if (email != null) 'email': email,
       });
 
-      if (response.statusCode == 201) {
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final token = response.data['token'] as String;
+        await _saveToken(token);
         return User.fromJson(response.data['user']);
       } else {
         throw Exception('注册失败');

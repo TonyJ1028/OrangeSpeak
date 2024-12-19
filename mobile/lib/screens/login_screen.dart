@@ -61,6 +61,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   SizedBox(height: 48.h),
                   TextFormField(
                     controller: _usernameController,
+                    autofocus: true,
+                    textInputAction: TextInputAction.next,
                     decoration: const InputDecoration(
                       labelText: '用户名',
                       prefixIcon: Icon(Icons.person),
@@ -75,6 +77,17 @@ class _LoginScreenState extends State<LoginScreen> {
                   SizedBox(height: 16.h),
                   TextFormField(
                     controller: _passwordController,
+                    textInputAction: TextInputAction.done,
+                    onFieldSubmitted: (value) {
+                      if (_formKey.currentState!.validate()) {
+                        context.read<AuthBloc>().add(
+                              LoginRequested(
+                                username: _usernameController.text,
+                                password: _passwordController.text,
+                              ),
+                            );
+                      }
+                    },
                     decoration: InputDecoration(
                       labelText: '密码',
                       prefixIcon: const Icon(Icons.lock),

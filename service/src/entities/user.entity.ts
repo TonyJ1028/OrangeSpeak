@@ -1,5 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToMany, JoinTable } from 'typeorm';
-import { Channel } from './channel.entity';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity()
 export class User {
@@ -15,13 +14,15 @@ export class User {
   @Column({ nullable: true })
   email: string;
 
-  @ManyToMany(() => Channel)
-  @JoinTable()
-  channels: Channel[];
+  @Column({ default: false })
+  isOnline: boolean;
 
   @CreateDateColumn()
   createdAt: Date;
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @Column({ nullable: true })
+  lastSeen: Date;
 } 
