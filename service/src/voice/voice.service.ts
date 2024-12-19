@@ -1,234 +1,169 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { VoiceChannel } from './entities/voice-channel.entity';
-import { UsersService } from '../users/users.service';
-import { MediasoupService } from './mediasoup.service';
-import { GroupsService } from '../groups/groups.service';
-import { CreateVoiceChannelDto } from './dto/create-voice-channel.dto';
-import { UpdateVoiceChannelDto } from './dto/update-voice-channel.dto';
-import { GroupPermission } from '../groups/entities/group-member.entity';
-import { AudioSettingsDto } from './dto/audio-settings.dto';
-import { UpdateVoiceControlDto } from './dto/voice-control.dto';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import * as mediasoup from 'mediasoup';
+import { Worker, Router, WebRtcTransport, Producer, Consumer, MediaKind } from 'mediasoup/node/lib/types';
 
 @Injectable()
-export class VoiceService {
-  private readonly logger = new Logger(VoiceService.name);
-  private readonly channelUsers: Map<number, Set<string>> = new Map();
-  private readonly userChannels: Map<string, number> = new Map();
-  private readonly userVoiceStates: Map<string, {
-    producerId?: string;
-    consumerIds: string[];
-    volume: number;
-    muted: boolean;
-    deafened: boolean;
-    speaking: boolean;
-    audioSettings: AudioSettingsDto;
+export class VoiceService implements OnModuleInit {
+  private worker: Worker;
+  private router: Router;
+  private rooms: Map<string, {
+    router: Router;
+    transports: Map<string, WebRtcTransport>;
+    producers: Map<string, Producer>;
+    consumers: Map<string, Consumer>;
   }> = new Map();
 
-  private readonly defaultAudioSettings: AudioSettingsDto = {
-    noiseSuppression: true,
-    echoCancellation: true,
-    autoGainControl: true,
-    sampleRate: 48000,
-    channelCount: 2,
-  };
+  async onModuleInit() {
+    this.worker = await mediasoup.createWorker({
+      logLevel: 'warn',
+      rtcMinPort: 10000,
+      rtcMaxPort: 10100,
+    });
 
-  constructor(
-    @InjectRepository(VoiceChannel)
-    private voiceChannelRepository: Repository<VoiceChannel>,
-    private usersService: UsersService,
-    private groupsService: GroupsService,
-    private mediasoupService: MediasoupService,
-    private configService: ConfigService,
-  ) {}
-
-  async create(createVoiceChannelDto: CreateVoiceChannelDto) {
-    const channel = this.voiceChannelRepository.create(createVoiceChannelDto);
-    return await this.voiceChannelRepository.save(channel);
-  }
-
-  async findAll(groupId: number) {
-    return await this.voiceChannelRepository.find({
-      where: { groupId },
-      relations: ['group'],
+    this.router = await this.worker.createRouter({
+      mediaCodecs: [
+        {
+          kind: 'audio',
+          mimeType: 'audio/opus',
+          clockRate: 48000,
+          channels: 2,
+        },
+      ],
     });
   }
 
-  async findOne(id: number) {
-    const channel = await this.voiceChannelRepository.findOne({
-      where: { id },
-      relations: ['group'],
-    });
-    if (!channel) {
-      throw new NotFoundException(`Voice channel #${id} not found`);
-    }
-    return channel;
-  }
+  async createRoom(roomId: string) {
+    if (!this.rooms.has(roomId)) {
+      const router = await this.worker.createRouter({
+        mediaCodecs: [
+          {
+            kind: 'audio',
+            mimeType: 'audio/opus',
+            clockRate: 48000,
+            channels: 2,
+          },
+        ],
+      });
 
-  async update(id: number, updateVoiceChannelDto: UpdateVoiceChannelDto) {
-    const channel = await this.findOne(id);
-    Object.assign(channel, updateVoiceChannelDto);
-    return await this.voiceChannelRepository.save(channel);
-  }
-
-  async remove(id: number) {
-    const channel = await this.findOne(id);
-    await this.voiceChannelRepository.remove(channel);
-  }
-
-  async joinChannel(userId: string, channelId: number) {
-    const channel = await this.findOne(channelId);
-    const currentChannel = this.userChannels.get(userId);
-    
-    if (currentChannel) {
-      await this.leaveChannel(userId);
-    }
-
-    // Check channel capacity
-    const users = this.getChannelUsers(channelId);
-    if (users.size >= channel.maxUsers) {
-      throw new BadRequestException('Channel is full');
-    }
-
-    // Add user to channel
-    users.add(userId);
-    this.userChannels.set(userId, channelId);
-
-    // Initialize voice state if not exists
-    if (!this.userVoiceStates.has(userId)) {
-      this.userVoiceStates.set(userId, {
-        consumerIds: [],
-        volume: 100,
-        muted: false,
-        deafened: false,
-        speaking: false,
-        audioSettings: { ...this.defaultAudioSettings },
+      this.rooms.set(roomId, {
+        router,
+        transports: new Map(),
+        producers: new Map(),
+        consumers: new Map(),
       });
     }
+    return this.rooms.get(roomId);
+  }
+
+  async createWebRtcTransport(roomId: string, userId: string) {
+    const room = await this.createRoom(roomId);
+    
+    const transport = await room.router.createWebRtcTransport({
+      listenIps: [
+        {
+          ip: '0.0.0.0',
+          announcedIp: '127.0.0.1', // 在生产环境中需要替换为实际的公网IP
+        },
+      ],
+      enableUdp: true,
+      enableTcp: true,
+      preferUdp: true,
+    });
+
+    room.transports.set(userId, transport);
 
     return {
-      channelId,
-      rtpCapabilities: this.mediasoupService.getRtpCapabilities(),
+      id: transport.id,
+      iceParameters: transport.iceParameters,
+      iceCandidates: transport.iceCandidates,
+      dtlsParameters: transport.dtlsParameters,
     };
   }
 
-  async leaveChannel(userId: string) {
-    const channelId = this.userChannels.get(userId);
-    if (!channelId) return;
-
-    // Remove user from channel
-    const users = this.getChannelUsers(channelId);
-    users.delete(userId);
-    this.userChannels.delete(userId);
-
-    // Cleanup user's mediasoup resources
-    const state = this.userVoiceStates.get(userId);
-    if (state) {
-      if (state.producerId) {
-        this.mediasoupService.closeProducer(state.producerId);
-      }
-      state.consumerIds.forEach(consumerId => {
-        this.mediasoupService.closeConsumer(consumerId);
-      });
-      state.consumerIds = [];
+  async connectTransport(roomId: string, userId: string, dtlsParameters: any) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      throw new Error('Room not found');
     }
 
-    // Remove empty channel users set
-    if (users.size === 0) {
-      this.channelUsers.delete(channelId);
+    const transport = room.transports.get(userId);
+    if (!transport) {
+      throw new Error('Transport not found');
     }
 
-    return { channelId };
+    await transport.connect({ dtlsParameters });
   }
 
-  async createTransport(userId: string) {
-    return await this.mediasoupService.createWebRtcTransport(userId);
-  }
+  async produce(roomId: string, userId: string, kind: MediaKind, rtpParameters: any) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      throw new Error('Room not found');
+    }
 
-  async connectTransport(userId: string, dtlsParameters: any) {
-    await this.mediasoupService.connectTransport(userId, dtlsParameters);
-  }
+    const transport = room.transports.get(userId);
+    if (!transport) {
+      throw new Error('Transport not found');
+    }
 
-  async produce(userId: string, transportId: string, rtpParameters: any) {
-    const producer = await this.mediasoupService.createProducer(
-      userId,
-      transportId,
+    const producer = await transport.produce({
+      kind,
       rtpParameters,
-    );
+    });
 
-    const state = this.userVoiceStates.get(userId);
-    if (state) {
-      state.producerId = producer.id;
-    }
+    room.producers.set(producer.id, producer);
 
-    return producer;
+    return { id: producer.id };
   }
 
-  async consume(userId: string, producerId: string, rtpCapabilities: any) {
-    const result = await this.mediasoupService.createConsumer(
-      userId,
+  async consume(roomId: string, userId: string, producerId: string, rtpCapabilities: any) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      throw new Error('Room not found');
+    }
+
+    const transport = room.transports.get(userId);
+    if (!transport) {
+      throw new Error('Transport not found');
+    }
+
+    if (!room.router.canConsume({
       producerId,
       rtpCapabilities,
-    );
-
-    const state = this.userVoiceStates.get(userId);
-    if (state) {
-      state.consumerIds.push(result.consumer.id);
+    })) {
+      throw new Error('Cannot consume');
     }
 
-    return result;
+    const consumer = await transport.consume({
+      producerId,
+      rtpCapabilities,
+    });
+
+    room.consumers.set(consumer.id, consumer);
+
+    return {
+      id: consumer.id,
+      producerId,
+      kind: consumer.kind,
+      rtpParameters: consumer.rtpParameters,
+    };
   }
 
-  async resumeConsumer(consumerId: string) {
-    await this.mediasoupService.resumeConsumer(consumerId);
-  }
-
-  getChannelUsers(channelId: number): Set<string> {
-    if (!this.channelUsers.has(channelId)) {
-      this.channelUsers.set(channelId, new Set());
+  async closeRoom(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (room) {
+      room.consumers.forEach(consumer => consumer.close());
+      room.producers.forEach(producer => producer.close());
+      room.transports.forEach(transport => transport.close());
+      room.router.close();
+      this.rooms.delete(roomId);
     }
-    return this.channelUsers.get(channelId);
   }
 
-  getUserChannel(userId: string): number | undefined {
-    return this.userChannels.get(userId);
-  }
-
-  async updateVoiceState(userId: string, update: Partial<UpdateVoiceControlDto>) {
-    const state = this.userVoiceStates.get(userId);
-    if (!state) {
-      throw new NotFoundException('User voice state not found');
+  getRtpCapabilities(roomId: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      throw new Error('Room not found');
     }
-
-    Object.assign(state, update);
-    return state;
+    return room.router.rtpCapabilities;
   }
-
-  async updateUserAudioSettings(userId: string, settings: AudioSettingsDto) {
-    return this.updateAudioSettings(userId, settings);
-  }
-
-  async updateAudioSettings(userId: string, settings: AudioSettingsDto) {
-    const state = this.userVoiceStates.get(userId);
-    if (!state) {
-      throw new NotFoundException('User voice state not found');
-    }
-
-    state.audioSettings = { ...state.audioSettings, ...settings };
-    return state.audioSettings;
-  }
-
-  getAudioSettings(userId: string): AudioSettingsDto {
-    const state = this.userVoiceStates.get(userId);
-    return state?.audioSettings || { ...this.defaultAudioSettings };
-  }
-
-  async cleanup() {
-    await this.mediasoupService.cleanup();
-    this.channelUsers.clear();
-    this.userChannels.clear();
-    this.userVoiceStates.clear();
-  }
-}
+} 
